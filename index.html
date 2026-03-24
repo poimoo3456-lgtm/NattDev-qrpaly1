@@ -2,226 +2,202 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>QR Manager Pro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>QR Manager Pro | NattDev</title>
   
-  <!-- Scripts -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;700;900&display=swap" rel="stylesheet">
   
   <style>
     body { 
       font-family: 'Kanit', sans-serif; 
-      -webkit-tap-highlight-color: transparent; 
-      touch-action: manipulation; 
       background-color: #f8fafc;
+      margin: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
     }
-    input { font-size: 16px !important; } /* ป้องกัน iPhone auto-zoom */
-    .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .page-in { animation: fadeIn 0.3s ease-out forwards; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
   </style>
 </head>
-<body class="overflow-hidden">
+<body>
   <div id="root"></div>
 
   <script>
-    const { useState, useEffect } = React;
-    const e = React.createElement;
-
-    // --- SVG Icons ---
-    const Icons = {
-      Qr: (p) => e('svg', { ...p, width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round" },
-        e('rect', { x: 3, y: 3, width: 7, height: 7 }), e('rect', { x: 14, y: 3, width: 7, height: 7 }),
-        e('rect', { x: 14, y: 14, width: 7, height: 7 }), e('rect', { x: 3, y: 14, width: 7, height: 7 })),
-      Plus: (p) => e('svg', { ...p, width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 3 },
-        e('line', { x1: 12, y1: 5, x2: 12, y2: 19 }), e('line', { x1: 5, y1: 12, x2: 19, y2: 12 })),
-      Back: (p) => e('svg', { ...p, width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5 },
-        e('path', { d: "m15 18-6-6 6-6" })),
-      Check: (p) => e('svg', { ...p, width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 3 },
-        e('polyline', { points: "20 6 9 17 4 12" }))
-    };
+    const { useState, useEffect, useMemo, createElement: h } = React;
 
     // --- PromptPay Logic ---
-    const getPayload = (id, amt) => {
-      const cleanId = id.replace(/[^0-9]/g, "");
-      let p = "0002010102110016A000000677010111";
-      if (cleanId.length === 10) p += "01140066" + cleanId.substring(1);
-      else if (cleanId.length === 13) p += "0213" + cleanId;
-      else return "";
-      p += "5802TH5303764";
-      if (amt && parseFloat(amt) > 0) {
-        const val = parseFloat(amt).toFixed(2);
-        p += "54" + val.length.toString().padStart(2, "0") + val;
-      }
-      p += "6304";
-      const crc16 = (s) => {
-        let c = 0xFFFF;
-        for (let i = 0; i < s.length; i++) {
-          let x = ((c >> 8) ^ s.charCodeAt(i)) & 0xFF;
-          x ^= x >> 4;
-          c = ((c << 8) ^ (x << 12) ^ (x << 5) ^ x) & 0xFFFF;
+    const getCRC16 = (data) => {
+      let crc = 0xFFFF;
+      for (let i = 0; i < data.length; i++) {
+        crc ^= (data.charCodeAt(i) << 8);
+        for (let j = 0; j < 8; j++) {
+          if ((crc & 0x8000) !== 0) crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
+          else crc = (crc << 1) & 0xFFFF;
         }
-        return (c & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
-      };
-      return p + crc16(p);
+      }
+      return crc.toString(16).toUpperCase().padStart(4, "0");
+    };
+
+    const generatePayload = (id, amount) => {
+      const target = id.replace(/[^0-9]/g, "");
+      let payload = "000201010211";
+      let info = "0016A000000677010111";
+      if (target.length === 10) info += "01140066" + target.substring(1);
+      else if (target.length === 13) info += "0213" + target;
+      else return "";
+
+      payload += "29" + info.length.toString().padStart(2, "0") + info;
+      payload += "5802TH5303764";
+      if (amount && parseFloat(amount) > 0) {
+        const amtStr = parseFloat(amount).toFixed(2);
+        payload += "54" + amtStr.length.toString().padStart(2, "0") + amtStr;
+      }
+      payload += "6304";
+      return payload + getCRC16(payload);
     };
 
     const App = () => {
       const [view, setView] = useState('home');
       const [accounts, setAccounts] = useState([]);
-      const [amount, setAmount] = useState('');
       const [selected, setSelected] = useState(null);
-      const [qrData, setQrData] = useState(null);
-      const [isAdding, setIsAdding] = useState(false);
+      const [amount, setAmount] = useState('');
+      const [isAddOpen, setIsAddOpen] = useState(false);
       const [newAcc, setNewAcc] = useState({ name: '', id: '' });
 
-      // โหลดข้อมูลจาก LocalStorage (เฉพาะตอนรันบนเว็บปกติ)
       useEffect(() => {
-        const saved = localStorage.getItem('qr_accounts');
-        if (saved) setAccounts(JSON.parse(saved));
+        try {
+          const saved = localStorage.getItem('nattdev_v3_data');
+          if (saved) setAccounts(JSON.parse(saved));
+        } catch (e) { console.error(e); }
       }, []);
 
-      const saveToLocal = (data) => {
-        localStorage.setItem('qr_accounts', JSON.stringify(data));
+      const save = (data) => {
+        setAccounts(data);
+        localStorage.setItem('nattdev_v3_data', JSON.stringify(data));
       };
 
-      const handleAddAccount = () => {
-        if (!newAcc.name || !newAcc.id) return;
-        const updated = [...accounts, { ...newAcc, uid: Date.now() }];
-        setAccounts(updated);
-        saveToLocal(updated);
-        setNewAcc({ name: '', id: '' });
-        setIsAdding(false);
-      };
-
-      if (view === 'home') return e('div', { className: "h-screen max-w-md mx-auto flex flex-col bg-slate-50 shadow-2xl" },
-        e('div', { className: "p-6 pt-10 bg-white border-b border-slate-100" },
-          e('h1', { className: "text-2xl font-black text-slate-900" }, "QR Manager")
-        ),
-        e('div', { className: "flex-1 overflow-y-auto p-6 space-y-6" },
-          e('div', { className: "bg-indigo-600 p-8 rounded-[40px] text-white shadow-xl shadow-indigo-100" },
-            e('p', { className: "text-xs font-bold opacity-60 mb-1" }, "ยินดีต้อนรับ"),
-            e('h2', { className: "text-2xl font-black mb-6" }, "จัดการบัญชีรับเงิน"),
-            e('button', { 
-              onClick: () => setIsAdding(true),
-              className: "w-full py-4 bg-white/20 rounded-2xl font-bold flex items-center justify-center gap-2 backdrop-blur-sm active:scale-95 transition-all"
-            }, e(Icons.Plus), "เพิ่มบัญชีใหม่")
+      // --- Views ---
+      const renderHome = () => h('div', { className: "flex flex-col h-screen page-in" },
+        h('header', { className: "p-6 bg-white border-b flex justify-between items-center" },
+          h('div', null,
+            h('h1', { className: "text-2xl font-extrabold text-slate-800" }, "QR Manager"),
+            h('p', { className: "text-[10px] font-bold text-indigo-500 tracking-widest" }, "BY NATTDEV")
           ),
-          e('div', { className: "space-y-3" },
-            e('h3', { className: "text-xs font-bold text-slate-400 uppercase tracking-widest px-2" }, "บัญชีของคุณ"),
-            accounts.length === 0 ? e('div', { className: "py-16 text-center text-slate-300 border-2 border-dashed border-slate-200 rounded-[40px]" }, "ยังไม่มีข้อมูลบัญชี") :
-            accounts.map(acc => e('button', {
+          h('button', { onClick: () => setView('settings'), className: "p-2 text-slate-400" }, "⚙️")
+        ),
+        h('main', { className: "flex-1 overflow-y-auto p-6 space-y-6" },
+          h('div', { className: "bg-indigo-600 p-8 rounded-[40px] text-white shadow-xl" },
+            h('h2', { className: "text-xl font-bold mb-6" }, "พร้อมรับชำระเงิน"),
+            h('button', { onClick: () => setIsAddOpen(true), className: "w-full py-4 bg-white/20 rounded-2xl font-bold border border-white/30" }, "+ เพิ่มบัญชี")
+          ),
+          h('div', { className: "space-y-3" },
+            h('h3', { className: "text-xs font-bold text-slate-400 uppercase tracking-widest pl-2" }, "รายการบัญชี"),
+            accounts.length === 0 ? h('div', { className: "py-12 text-center text-slate-300 italic bg-white rounded-[32px]" }, "ยังไม่มีข้อมูล") :
+            accounts.map(acc => h('button', {
               key: acc.uid,
               onClick: () => { setSelected(acc); setView('input'); },
-              className: "w-full bg-white p-6 rounded-[32px] flex items-center justify-between border border-slate-100 shadow-sm active:scale-95 transition-all"
+              className: "w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center justify-between"
             }, 
-              e('div', { className: "text-left" },
-                e('p', { className: "font-black text-slate-800" }, acc.name),
-                e('p', { className: "text-xs text-slate-400 font-bold" }, acc.id)
+              h('div', { className: "text-left" },
+                h('p', { className: "font-bold text-slate-800" }, acc.name),
+                h('p', { className: "text-xs text-slate-400" }, acc.id)
               ),
-              e('div', { className: "text-indigo-600" }, e(Icons.Qr))
+              h('span', { className: "text-xl" }, "📲")
             ))
           )
         ),
-        isAdding && e('div', { className: "fixed inset-0 bg-slate-900/60 z-[100] flex items-end" },
-          e('div', { className: "bg-white w-full max-w-md mx-auto rounded-t-[48px] p-8 pb-12 animate-slide-up shadow-2xl" },
-            e('h3', { className: "text-xl font-black mb-6 text-center" }, "เพิ่มบัญชี PromptPay"),
-            e('div', { className: "space-y-4 mb-8" },
-              e('input', { 
-                placeholder: "ชื่อเรียกบัญชี (เช่น ออมทรัพย์)", 
-                className: "w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none font-bold",
-                value: newAcc.name,
-                onChange: ev => setNewAcc({...newAcc, name: ev.target.value})
-              }),
-              e('input', { 
-                placeholder: "เบอร์โทรศัพท์ หรือ เลขบัตร ปชช.", 
-                inputMode: "numeric",
-                className: "w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none font-bold",
-                value: newAcc.id,
-                onChange: ev => setNewAcc({...newAcc, id: ev.target.value.replace(/[^0-9]/g, '')})
-              })
-            ),
-            e('div', { className: "flex gap-4" },
-              e('button', { onClick: () => setIsAdding(false), className: "flex-1 py-4 font-bold text-slate-400" }, "ยกเลิก"),
-              e('button', { 
-                className: "flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-100",
-                onClick: handleAddAccount
-              }, "บันทึกข้อมูล")
+        isAddOpen && h('div', { className: "fixed inset-0 z-50 flex items-end bg-slate-900/60 p-4" },
+          h('div', { className: "bg-white w-full rounded-[40px] p-8 pb-12 shadow-2xl" },
+            h('h3', { className: "text-xl font-bold mb-6" }, "เพิ่มบัญชีใหม่"),
+            h('input', { placeholder: "ชื่อบัญชี", className: "w-full p-4 mb-4 bg-slate-50 rounded-2xl border", value: newAcc.name, onChange: e => setNewAcc({...newAcc, name: e.target.value}) }),
+            h('input', { placeholder: "เลขพร้อมเพย์", className: "w-full p-4 mb-8 bg-slate-50 rounded-2xl border", value: newAcc.id, onChange: e => setNewAcc({...newAcc, id: e.target.value}) }),
+            h('div', { className: "flex gap-4" },
+              h('button', { onClick: () => setIsAddOpen(false), className: "flex-1 font-bold text-slate-400" }, "ยกเลิก"),
+              h('button', { onClick: () => {
+                if(!newAcc.name || !newAcc.id) return;
+                const updated = [...accounts, {...newAcc, uid: Date.now()}];
+                save(updated);
+                setNewAcc({name:'', id:''});
+                setIsAddOpen(false);
+              }, className: "flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold" }, "บันทึก")
             )
           )
         )
       );
 
-      if (view === 'input') return e('div', { className: "h-screen max-w-md mx-auto flex flex-col bg-white" },
-        e('div', { className: "p-6 pt-10 flex items-center gap-4 border-b border-slate-50" },
-          e('button', { onClick: () => setView('home'), className: "p-2 -ml-2 text-slate-300" }, e(Icons.Back)),
-          e('h1', { className: "text-xl font-black" }, "ระบุจำนวนเงิน")
+      const renderInput = () => h('div', { className: "flex flex-col h-screen bg-white page-in" },
+        h('header', { className: "p-6 flex items-center gap-4" },
+          h('button', { onClick: () => setView('home'), className: "text-2xl" }, "←"),
+          h('h2', { className: "text-xl font-bold" }, "ยอดเงิน")
         ),
-        e('div', { className: "flex-1 p-6 flex flex-col gap-8" },
-          e('div', { className: "bg-slate-50 p-10 rounded-[48px] text-center space-y-2 border border-slate-100" },
-            e('p', { className: "text-xs font-bold text-slate-400 uppercase" }, "ใส่ยอดเงินที่ต้องการรับ"),
-            e('div', { className: "flex items-center justify-center gap-2" },
-              e('span', { className: "text-3xl font-black text-indigo-300" }, "฿"),
-              e('input', {
-                autoFocus: true,
-                inputMode: "decimal",
-                placeholder: "0.00",
-                className: "bg-transparent text-6xl font-black outline-none w-full max-w-[220px] text-center",
-                value: amount,
-                onChange: ev => {
-                  const val = ev.target.value;
-                  if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) setAmount(val);
-                }
-              })
-            )
-          ),
-          e('div', { className: "p-6 bg-indigo-50/50 rounded-3xl border border-indigo-100" },
-            e('p', { className: "text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1" }, "รับเงินเข้าบัญชี"),
-            e('p', { className: "text-lg font-black text-slate-800" }, selected?.name),
-            e('p', { className: "text-sm font-bold text-slate-400" }, selected?.id)
-          ),
-          e('button', {
-            disabled: !amount,
-            onClick: () => { setQrData(getPayload(selected.id, amount)); setView('qr'); },
-            className: "w-full py-5 bg-indigo-600 text-white rounded-[32px] font-black text-xl shadow-xl shadow-indigo-100 disabled:opacity-20 transition-all"
-          }, "สร้าง QR Code")
+        h('main', { className: "flex-1 p-8 flex flex-col items-center justify-center" },
+          h('p', { className: "text-slate-400 mb-2" }, "โอนเข้า: " + selected.name),
+          h('input', { 
+            autoFocus: true, 
+            type: "number",
+            className: "w-full text-6xl font-bold text-center outline-none text-indigo-600 mb-12", 
+            placeholder: "0.00", 
+            value: amount, 
+            onChange: e => setAmount(e.target.value) 
+          }),
+          h('button', { onClick: () => setView('qr'), className: "w-full py-5 bg-indigo-600 text-white rounded-[32px] font-bold text-xl" }, "สร้าง QR Code")
         )
       );
 
-      if (view === 'qr') return e('div', { className: "h-screen max-w-md mx-auto flex flex-col bg-slate-900 text-white" },
-        e('div', { className: "p-8 pt-12 flex justify-between items-center" },
-          e('button', { onClick: () => setView('input'), className: "p-2 bg-white/10 rounded-full" }, e(Icons.Back)),
-          e('span', { className: "text-xs font-bold opacity-40 uppercase tracking-widest" }, "Scan to Pay")
-        ),
-        e('div', { className: "flex-1 flex flex-col items-center justify-center p-8 text-center" },
-          e('div', { className: "bg-white p-6 rounded-[56px] shadow-2xl mb-10" },
-            e('img', { 
-              src: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`,
-              className: "w-64 h-64"
-            })
+      const renderQR = () => {
+        const payload = generatePayload(selected.id, amount);
+        const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" + encodeURIComponent(payload);
+        return h('div', { className: "flex flex-col h-screen bg-slate-900 text-white page-in" },
+          h('header', { className: "p-8" }, h('button', { onClick: () => setView('input'), className: "text-2xl" }, "←")),
+          h('main', { className: "flex-1 flex flex-col items-center justify-center p-8 text-center" },
+            h('div', { className: "bg-white p-6 rounded-[50px] mb-10" }, h('img', { src: qrUrl, className: "w-60 h-60" })),
+            h('h3', { className: "text-5xl font-bold mb-2" }, "฿" + (parseFloat(amount) || 0).toLocaleString()),
+            h('p', { className: "text-indigo-400 font-bold" }, selected.name)
           ),
-          e('h2', { className: "text-6xl font-black mb-2" }, "฿" + parseFloat(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })),
-          e('p', { className: "text-xl font-bold text-indigo-400" }, selected.name),
-          e('p', { className: "text-sm opacity-30" }, selected.id)
+          h('footer', { className: "p-8" },
+            h('button', { onClick: () => { setView('home'); setAmount(''); }, className: "w-full py-5 bg-white text-slate-900 rounded-[32px] font-bold" }, "เสร็จสิ้น")
+          )
+        );
+      };
+
+      const renderSettings = () => h('div', { className: "flex flex-col h-screen bg-white page-in" },
+        h('header', { className: "p-6 flex items-center gap-4 border-b" },
+          h('button', { onClick: () => setView('home'), className: "text-2xl" }, "←"),
+          h('h2', { className: "text-xl font-bold" }, "ตั้งค่า")
         ),
-        e('div', { className: "p-8" },
-          e('button', {
-            onClick: () => { setView('home'); setAmount(''); },
-            className: "w-full py-6 bg-white text-slate-900 rounded-[32px] font-black text-xl shadow-xl shadow-white/5"
-          }, "เสร็จสิ้น")
+        h('main', { className: "p-6 space-y-6" },
+          h('section', { className: "space-y-4" },
+            h('h3', { className: "text-xs font-bold text-slate-400 tracking-widest uppercase" }, "จัดการบัญชี"),
+            accounts.map(acc => h('div', { key: acc.uid, className: "flex justify-between p-4 bg-slate-50 rounded-2xl" },
+              h('div', null, h('p', { className: "font-bold" }, acc.name), h('p', { className: "text-xs text-slate-400" }, acc.id)),
+              h('button', { onClick: () => save(accounts.filter(a => a.uid !== acc.uid)), className: "text-red-500" }, "ลบ")
+            ))
+          ),
+          h('div', { className: "p-8 bg-indigo-50 rounded-[40px] text-center" },
+            h('p', { className: "text-indigo-600 font-bold" }, "NattDev Team"),
+            h('p', { className: "text-[10px] text-indigo-300 font-bold mt-1" }, "VERSION 3.0.0")
+          )
         )
       );
+
+      // --- Main Router ---
+      if (view === 'home') return renderHome();
+      if (view === 'input') return renderInput();
+      if (view === 'qr') return renderQR();
+      if (view === 'settings') return renderSettings();
+      return h('div', null, "Loading...");
     };
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(e(App));
+    root.render(h(App));
   </script>
 </body>
 </html>
