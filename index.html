@@ -1,313 +1,228 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  QrCode, Plus, X, Settings, LogOut, ChevronRight, Store, Users, 
-  CheckCircle2, Percent, KeyRound, ChevronLeft, LayoutDashboard,
-  Copy, Palette, Shield, CreditCard, Bell, History, Database,
-  Smartphone, ShieldCheck, Mail, Info, ArrowRight, Save, MessageSquare
-} from 'lucide-react';
-
-// --- PromptPay Payload Logic ---
-const generatePromptPay = (id, amount) => {
-  if (!id) return "";
-  const target = id.replace(/[^0-9]/g, "");
-  let payload = "0002010102110016A000000677010111";
-  if (target.length === 10) {
-    const mobileFormat = "0066" + target.substring(1);
-    payload += "01" + mobileFormat.length.toString().padStart(2, "0") + mobileFormat;
-  } else if (target.length === 13) {
-    payload += "02" + target.length.toString().padStart(2, "0") + target;
-  } else return "";
-  payload += "5802TH5303764";
-  if (amount && parseFloat(amount) > 0) {
-    const amtStr = parseFloat(amount).toFixed(2);
-    payload += "54" + amtStr.length.toString().padStart(2, "0") + amtStr;
-  }
-  payload += "6304";
-  const crc16 = (data) => {
-    let crc = 0xFFFF;
-    for (let i = 0; i < data.length; i++) {
-      let x = ((crc >> 8) ^ data.charCodeAt(i)) & 0xFF;
-      x ^= x >> 4;
-      crc = ((crc << 8) ^ (x << 12) ^ (x << 5) ^ x) & 0xFFFF;
-    }
-    return (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
-  };
-  return payload + crc16(payload);
-};
-
-const App = () => {
-  // --- Auth & User State ---
-  const [authStep, setAuthStep] = useState('landing'); 
-  const [user, setUser] = useState(null);
-  const [regData, setRegData] = useState({ name: '', phone: '' });
-  const [otpValue, setOtpValue] = useState('');
-  const [generatedOtp, setGeneratedOtp] = useState('');
-  const [smsNotification, setSmsNotification] = useState(null);
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>QR Manager Pro</title>
   
-  // --- App Content State ---
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [settingTab, setSettingTab] = useState('main');
-  const [merchants, setMerchants] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [toast, setToast] = useState(null);
-  const [isStaffMode, setIsStaffMode] = useState(false);
+  <!-- Scripts -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
   
-  // --- Form States ---
-  const [selectedMerchant, setSelectedMerchant] = useState(null);
-  const [baseAmount, setBaseAmount] = useState('');
-  const [showQR, setShowQR] = useState(false);
-  const [isAddingBank, setIsAddingBank] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newId, setNewId] = useState('');
-
-  // --- Extended Config ---
-  const [config, setConfig] = useState({
-    vatRate: 7,
-    serviceCharge: 0,
-    staffPin: '123456',
-    shopAddress: '',
-    taxId: '',
-    autoSaveHistory: true,
-  });
-
-  const notify = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
-  };
-
-  const handleSendOtp = () => {
-    if (!regData.phone || regData.phone.length < 10) {
-      notify("กรุณาใส่เบอร์โทรศัพท์ให้ถูกต้อง");
-      return;
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;700;900&display=swap" rel="stylesheet">
+  
+  <style>
+    body { 
+      font-family: 'Kanit', sans-serif; 
+      -webkit-tap-highlight-color: transparent; 
+      touch-action: manipulation; 
+      background-color: #f8fafc;
     }
-    // สร้างรหัส 4 หลัก
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    setGeneratedOtp(code);
-    
-    // แสดงแถบจำลอง SMS ด้านบน
-    setSmsNotification(`[SMS] รหัสยืนยัน OTP ของคุณคือ: ${code}`);
-    
-    // ไปที่หน้ากรอก OTP
-    setAuthStep('otp');
-  };
+    input { font-size: 16px !important; } /* ป้องกัน iPhone auto-zoom */
+    .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+  </style>
+</head>
+<body class="overflow-hidden">
+  <div id="root"></div>
 
-  const verifyOtp = () => {
-    if (otpValue === generatedOtp) {
-      setUser({ ...regData, id: Date.now() });
-      setSmsNotification(null);
-      setAuthStep('main');
-      notify("ลงทะเบียนสำเร็จ");
-    } else {
-      notify("รหัส OTP ไม่ถูกต้อง");
-    }
-  };
+  <script>
+    const { useState, useEffect } = React;
+    const e = React.createElement;
 
-  const calculateTotal = () => {
-    const amount = parseFloat(baseAmount) || 0;
-    const sc = (amount * config.serviceCharge) / 100;
-    const vat = ((amount + sc) * config.vatRate) / 100;
-    return (amount + sc + vat).toFixed(2);
-  };
+    // --- SVG Icons ---
+    const Icons = {
+      Qr: (p) => e('svg', { ...p, width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round" },
+        e('rect', { x: 3, y: 3, width: 7, height: 7 }), e('rect', { x: 14, y: 3, width: 7, height: 7 }),
+        e('rect', { x: 14, y: 14, width: 7, height: 7 }), e('rect', { x: 3, y: 14, width: 7, height: 7 })),
+      Plus: (p) => e('svg', { ...p, width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 3 },
+        e('line', { x1: 12, y1: 5, x2: 12, y2: 19 }), e('line', { x1: 5, y1: 12, x2: 19, y2: 12 })),
+      Back: (p) => e('svg', { ...p, width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5 },
+        e('path', { d: "m15 18-6-6 6-6" })),
+      Check: (p) => e('svg', { ...p, width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 3 },
+        e('polyline', { points: "20 6 9 17 4 12" }))
+    };
 
-  // --- Auth Screens ---
-  if (authStep === 'landing') {
-    return (
-      <div className="flex flex-col h-screen max-w-md mx-auto bg-white p-8 font-sans items-center justify-center">
-        <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center mb-8 shadow-2xl">
-          <QrCode size={48} className="text-white" />
-        </div>
-        <h1 className="text-4xl font-black text-slate-900 mb-2">QR Manager</h1>
-        <p className="text-slate-400 text-center mb-12">จัดการร้านค้าและรับเงินง่ายๆ ในแอปเดียว</p>
-        <div className="w-full space-y-4">
-          <button onClick={() => setAuthStep('register')} className="w-full py-5 bg-indigo-600 text-white rounded-[24px] font-black shadow-xl">เริ่มต้นใช้งาน</button>
-          <button onClick={() => setAuthStep('otp-staff')} className="w-full py-5 bg-slate-100 text-slate-600 rounded-[24px] font-black">เข้าใช้งานโหมดพนักงาน</button>
-        </div>
-      </div>
-    );
-  }
+    // --- PromptPay Logic ---
+    const getPayload = (id, amt) => {
+      const cleanId = id.replace(/[^0-9]/g, "");
+      let p = "0002010102110016A000000677010111";
+      if (cleanId.length === 10) p += "01140066" + cleanId.substring(1);
+      else if (cleanId.length === 13) p += "0213" + cleanId;
+      else return "";
+      p += "5802TH5303764";
+      if (amt && parseFloat(amt) > 0) {
+        const val = parseFloat(amt).toFixed(2);
+        p += "54" + val.length.toString().padStart(2, "0") + val;
+      }
+      p += "6304";
+      const crc16 = (s) => {
+        let c = 0xFFFF;
+        for (let i = 0; i < s.length; i++) {
+          let x = ((c >> 8) ^ s.charCodeAt(i)) & 0xFF;
+          x ^= x >> 4;
+          c = ((c << 8) ^ (x << 12) ^ (x << 5) ^ x) & 0xFFFF;
+        }
+        return (c & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
+      };
+      return p + crc16(p);
+    };
 
-  if (authStep === 'register') {
-    return (
-      <div className="flex flex-col h-screen max-w-md mx-auto bg-white p-10 font-sans justify-center">
-        <div className="space-y-8">
-          <h2 className="text-3xl font-black">สมัครสมาชิก</h2>
-          <div className="space-y-4">
-            <input type="text" placeholder="ชื่อร้านค้า" className="w-full p-5 bg-slate-50 rounded-2xl border-none font-bold" value={regData.name} onChange={e => setRegData({...regData, name: e.target.value})} />
-            <input type="tel" placeholder="เบอร์โทรศัพท์" className="w-full p-5 bg-slate-50 rounded-2xl border-none font-bold" value={regData.phone} onChange={e => setRegData({...regData, phone: e.target.value})} />
-          </div>
-          <button onClick={handleSendOtp} className="w-full py-6 bg-indigo-600 text-white rounded-[28px] font-black shadow-xl">ส่งรหัส OTP</button>
-        </div>
-      </div>
-    );
-  }
+    const App = () => {
+      const [view, setView] = useState('home');
+      const [accounts, setAccounts] = useState([]);
+      const [amount, setAmount] = useState('');
+      const [selected, setSelected] = useState(null);
+      const [qrData, setQrData] = useState(null);
+      const [isAdding, setIsAdding] = useState(false);
+      const [newAcc, setNewAcc] = useState({ name: '', id: '' });
 
-  if (authStep === 'otp' || authStep === 'otp-staff') {
-    return (
-      <div className="flex flex-col h-screen max-w-md mx-auto bg-white p-10 font-sans justify-center relative">
-        {smsNotification && (
-          <div className="absolute top-10 left-4 right-4 bg-slate-900 text-white p-4 rounded-2xl flex items-center gap-3 animate-bounce shadow-2xl z-[500]">
-            <MessageSquare size={20} className="text-indigo-400" />
-            <p className="text-sm font-bold">{smsNotification}</p>
-          </div>
-        )}
-        <div className="space-y-8 text-center">
-          <h2 className="text-3xl font-black">{authStep === 'otp-staff' ? "รหัสผ่านพนักงาน" : "ยืนยันรหัส OTP"}</h2>
-          <p className="text-slate-400">{authStep === 'otp-staff' ? "กรอกรหัส 6 หลักจากเจ้าของร้าน" : "กรอกรหัส 4 หลักที่ส่งไปที่มือถือคุณ"}</p>
-          <input type="text" maxLength={authStep === 'otp-staff' ? 6 : 4} className="w-full py-6 bg-slate-50 rounded-[32px] text-5xl text-center font-black tracking-widest outline-none" value={otpValue} onChange={e => setOtpValue(e.target.value)} />
-          <button onClick={() => {
-            if (authStep === 'otp-staff') {
-              if (otpValue === config.staffPin) { setUser({ name: "Staff", role: 'staff' }); setIsStaffMode(true); setAuthStep('main'); setActiveTab('create'); }
-              else notify("รหัสไม่ถูกต้อง");
-            } else verifyOtp();
-          }} className="w-full py-6 bg-indigo-600 text-white rounded-[28px] font-black shadow-xl">ตกลง</button>
-        </div>
-      </div>
-    );
-  }
+      // โหลดข้อมูลจาก LocalStorage (เฉพาะตอนรันบนเว็บปกติ)
+      useEffect(() => {
+        const saved = localStorage.getItem('qr_accounts');
+        if (saved) setAccounts(JSON.parse(saved));
+      }, []);
 
-  return (
-    <div className="flex flex-col h-screen max-w-md mx-auto bg-slate-50 text-slate-900 font-sans relative overflow-hidden">
-      {/* Toast Notification */}
-      {toast && (
-        <div className="fixed top-12 left-6 right-6 z-[300] bg-slate-900 text-white p-5 rounded-3xl text-sm font-bold flex items-center gap-3 shadow-2xl animate-in fade-in slide-in-from-top-6">
-          <CheckCircle2 size={16} className="text-emerald-400" /> {toast}
-        </div>
-      )}
+      const saveToLocal = (data) => {
+        localStorage.setItem('qr_accounts', JSON.stringify(data));
+      };
 
-      {/* Header */}
-      <div className="bg-white px-8 pt-16 pb-6 border-b border-slate-100 flex justify-between items-center">
-        <div className="flex items-center gap-4">
-          <div className={`w-14 h-14 rounded-[22px] flex items-center justify-center text-white ${isStaffMode ? 'bg-amber-500' : 'bg-indigo-600'} shadow-lg`}>
-            {isStaffMode ? <Users size={28} /> : <Store size={28} />}
-          </div>
-          <div>
-            <h1 className="text-xl font-black leading-none mb-1">{user?.name || 'ร้านของฉัน'}</h1>
-            <span className="text-[10px] font-black uppercase text-slate-400">{isStaffMode ? 'โหมดพนักงาน' : 'เจ้าของร้าน'}</span>
-          </div>
-        </div>
-      </div>
+      const handleAddAccount = () => {
+        if (!newAcc.name || !newAcc.id) return;
+        const updated = [...accounts, { ...newAcc, uid: Date.now() }];
+        setAccounts(updated);
+        saveToLocal(updated);
+        setNewAcc({ name: '', id: '' });
+        setIsAdding(false);
+      };
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 pb-32">
-        {activeTab === 'dashboard' && (
-          <div className="space-y-6">
-            <div className={`p-8 rounded-[44px] text-white shadow-2xl relative overflow-hidden ${isStaffMode ? 'bg-amber-500' : 'bg-indigo-600'}`}>
-              <div className="relative z-10">
-                <p className="text-[10px] font-black uppercase opacity-70 mb-2">รายรับรวมวันนี้</p>
-                <h2 className="text-4xl font-black">฿ {history.reduce((a, b) => a + parseFloat(b.amount), 0).toLocaleString()}</h2>
-              </div>
-              <QrCode size={120} className="absolute -bottom-8 -right-8 opacity-10 rotate-12" />
-            </div>
+      if (view === 'home') return e('div', { className: "h-screen max-w-md mx-auto flex flex-col bg-slate-50 shadow-2xl" },
+        e('div', { className: "p-6 pt-10 bg-white border-b border-slate-100" },
+          e('h1', { className: "text-2xl font-black text-slate-900" }, "QR Manager")
+        ),
+        e('div', { className: "flex-1 overflow-y-auto p-6 space-y-6" },
+          e('div', { className: "bg-indigo-600 p-8 rounded-[40px] text-white shadow-xl shadow-indigo-100" },
+            e('p', { className: "text-xs font-bold opacity-60 mb-1" }, "ยินดีต้อนรับ"),
+            e('h2', { className: "text-2xl font-black mb-6" }, "จัดการบัญชีรับเงิน"),
+            e('button', { 
+              onClick: () => setIsAdding(true),
+              className: "w-full py-4 bg-white/20 rounded-2xl font-bold flex items-center justify-center gap-2 backdrop-blur-sm active:scale-95 transition-all"
+            }, e(Icons.Plus), "เพิ่มบัญชีใหม่")
+          ),
+          e('div', { className: "space-y-3" },
+            e('h3', { className: "text-xs font-bold text-slate-400 uppercase tracking-widest px-2" }, "บัญชีของคุณ"),
+            accounts.length === 0 ? e('div', { className: "py-16 text-center text-slate-300 border-2 border-dashed border-slate-200 rounded-[40px]" }, "ยังไม่มีข้อมูลบัญชี") :
+            accounts.map(acc => e('button', {
+              key: acc.uid,
+              onClick: () => { setSelected(acc); setView('input'); },
+              className: "w-full bg-white p-6 rounded-[32px] flex items-center justify-between border border-slate-100 shadow-sm active:scale-95 transition-all"
+            }, 
+              e('div', { className: "text-left" },
+                e('p', { className: "font-black text-slate-800" }, acc.name),
+                e('p', { className: "text-xs text-slate-400 font-bold" }, acc.id)
+              ),
+              e('div', { className: "text-indigo-600" }, e(Icons.Qr))
+            ))
+          )
+        ),
+        isAdding && e('div', { className: "fixed inset-0 bg-slate-900/60 z-[100] flex items-end" },
+          e('div', { className: "bg-white w-full max-w-md mx-auto rounded-t-[48px] p-8 pb-12 animate-slide-up shadow-2xl" },
+            e('h3', { className: "text-xl font-black mb-6 text-center" }, "เพิ่มบัญชี PromptPay"),
+            e('div', { className: "space-y-4 mb-8" },
+              e('input', { 
+                placeholder: "ชื่อเรียกบัญชี (เช่น ออมทรัพย์)", 
+                className: "w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none font-bold",
+                value: newAcc.name,
+                onChange: ev => setNewAcc({...newAcc, name: ev.target.value})
+              }),
+              e('input', { 
+                placeholder: "เบอร์โทรศัพท์ หรือ เลขบัตร ปชช.", 
+                inputMode: "numeric",
+                className: "w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none font-bold",
+                value: newAcc.id,
+                onChange: ev => setNewAcc({...newAcc, id: ev.target.value.replace(/[^0-9]/g, '')})
+              })
+            ),
+            e('div', { className: "flex gap-4" },
+              e('button', { onClick: () => setIsAdding(false), className: "flex-1 py-4 font-bold text-slate-400" }, "ยกเลิก"),
+              e('button', { 
+                className: "flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-100",
+                onClick: handleAddAccount
+              }, "บันทึกข้อมูล")
+            )
+          )
+        )
+      );
 
-            <div className="grid grid-cols-2 gap-4">
-              <button onClick={() => setActiveTab('create')} className="bg-white p-8 rounded-[36px] flex flex-col items-center gap-4 border border-slate-100 shadow-sm active:scale-95 transition-all">
-                <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center"><QrCode size={30}/></div>
-                <span className="text-[11px] font-black text-slate-500 uppercase">รับเงิน</span>
-              </button>
-              {!isStaffMode && (
-                <button onClick={() => setIsAddingBank(true)} className="bg-white p-8 rounded-[36px] flex flex-col items-center gap-4 border border-slate-100 shadow-sm active:scale-95 transition-all">
-                  <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center"><Plus size={30}/></div>
-                  <span className="text-[11px] font-black text-slate-500 uppercase">เพิ่มบัญชี</span>
-                </button>
-              )}
-            </div>
+      if (view === 'input') return e('div', { className: "h-screen max-w-md mx-auto flex flex-col bg-white" },
+        e('div', { className: "p-6 pt-10 flex items-center gap-4 border-b border-slate-50" },
+          e('button', { onClick: () => setView('home'), className: "p-2 -ml-2 text-slate-300" }, e(Icons.Back)),
+          e('h1', { className: "text-xl font-black" }, "ระบุจำนวนเงิน")
+        ),
+        e('div', { className: "flex-1 p-6 flex flex-col gap-8" },
+          e('div', { className: "bg-slate-50 p-10 rounded-[48px] text-center space-y-2 border border-slate-100" },
+            e('p', { className: "text-xs font-bold text-slate-400 uppercase" }, "ใส่ยอดเงินที่ต้องการรับ"),
+            e('div', { className: "flex items-center justify-center gap-2" },
+              e('span', { className: "text-3xl font-black text-indigo-300" }, "฿"),
+              e('input', {
+                autoFocus: true,
+                inputMode: "decimal",
+                placeholder: "0.00",
+                className: "bg-transparent text-6xl font-black outline-none w-full max-w-[220px] text-center",
+                value: amount,
+                onChange: ev => {
+                  const val = ev.target.value;
+                  if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) setAmount(val);
+                }
+              })
+            )
+          ),
+          e('div', { className: "p-6 bg-indigo-50/50 rounded-3xl border border-indigo-100" },
+            e('p', { className: "text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1" }, "รับเงินเข้าบัญชี"),
+            e('p', { className: "text-lg font-black text-slate-800" }, selected?.name),
+            e('p', { className: "text-sm font-bold text-slate-400" }, selected?.id)
+          ),
+          e('button', {
+            disabled: !amount,
+            onClick: () => { setQrData(getPayload(selected.id, amount)); setView('qr'); },
+            className: "w-full py-5 bg-indigo-600 text-white rounded-[32px] font-black text-xl shadow-xl shadow-indigo-100 disabled:opacity-20 transition-all"
+          }, "สร้าง QR Code")
+        )
+      );
 
-            <div className="space-y-4">
-              <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-2">บัญชีรับเงิน</h3>
-              {merchants.map(m => (
-                <div key={m.id} className="bg-white p-5 rounded-[30px] flex items-center gap-4 border border-slate-100">
-                  <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white"><CreditCard size={22}/></div>
-                  <div className="flex-1"><p className="font-black">{m.name}</p><p className="text-[10px] text-slate-400 font-mono">{m.targetId}</p></div>
-                  <button onClick={() => { setSelectedMerchant(m); setActiveTab('create'); }} className="text-indigo-600"><ChevronRight size={24}/></button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+      if (view === 'qr') return e('div', { className: "h-screen max-w-md mx-auto flex flex-col bg-slate-900 text-white" },
+        e('div', { className: "p-8 pt-12 flex justify-between items-center" },
+          e('button', { onClick: () => setView('input'), className: "p-2 bg-white/10 rounded-full" }, e(Icons.Back)),
+          e('span', { className: "text-xs font-bold opacity-40 uppercase tracking-widest" }, "Scan to Pay")
+        ),
+        e('div', { className: "flex-1 flex flex-col items-center justify-center p-8 text-center" },
+          e('div', { className: "bg-white p-6 rounded-[56px] shadow-2xl mb-10" },
+            e('img', { 
+              src: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`,
+              className: "w-64 h-64"
+            })
+          ),
+          e('h2', { className: "text-6xl font-black mb-2" }, "฿" + parseFloat(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })),
+          e('p', { className: "text-xl font-bold text-indigo-400" }, selected.name),
+          e('p', { className: "text-sm opacity-30" }, selected.id)
+        ),
+        e('div', { className: "p-8" },
+          e('button', {
+            onClick: () => { setView('home'); setAmount(''); },
+            className: "w-full py-6 bg-white text-slate-900 rounded-[32px] font-black text-xl shadow-xl shadow-white/5"
+          }, "เสร็จสิ้น")
+        )
+      );
+    };
 
-        {activeTab === 'create' && (
-          <div className="space-y-6">
-            {!showQR ? (
-              <div className="space-y-8">
-                <div className="space-y-4">
-                  <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-2">ระบุยอดเงิน</label>
-                  <input type="number" value={baseAmount} onChange={e => setBaseAmount(e.target.value)} placeholder="0.00" className="w-full p-10 bg-white border border-slate-100 rounded-[48px] text-6xl font-black outline-none text-center shadow-sm" />
-                </div>
-                <div className="space-y-4">
-                  <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-2">เลือกบัญชี</label>
-                  <div className="flex gap-3 overflow-x-auto pb-2">
-                    {merchants.map(m => (
-                      <button key={m.id} onClick={() => setSelectedMerchant(m)} className={`flex-shrink-0 p-5 rounded-[28px] border-2 transition-all ${selectedMerchant?.id === m.id ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-100'}`}>
-                        <p className="font-black text-sm">{m.name}</p>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <button onClick={() => {
-                  if(!selectedMerchant || !baseAmount) return notify("กรุณากรอกข้อมูลให้ครบ");
-                  setShowQR(true);
-                  setHistory([{ id: Date.now(), amount: calculateTotal(), merchant: selectedMerchant.name, time: new Date().toLocaleTimeString() }, ...history]);
-                }} className="w-full py-7 bg-indigo-600 text-white rounded-[36px] font-black text-xl shadow-2xl">สร้าง QR Code</button>
-              </div>
-            ) : (
-              <div className="text-center space-y-8 animate-in zoom-in-95">
-                <div className="bg-white p-12 rounded-[64px] shadow-2xl border border-slate-50 relative">
-                  <div className="mb-8 p-4 bg-slate-50 rounded-3xl inline-block border-2 border-slate-50">
-                    <img src={`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(generatePromptPay(selectedMerchant.targetId, calculateTotal()))}`} className="w-56 h-56" alt="QR" />
-                  </div>
-                  <h2 className="text-6xl font-black mb-1">฿{calculateTotal()}</h2>
-                  <p className="text-slate-400 text-[11px] font-black uppercase mb-10">{selectedMerchant.name}</p>
-                  <button onClick={() => {setShowQR(false); setBaseAmount('');}} className="w-full py-6 bg-slate-900 text-white rounded-[32px] font-black">เสร็จสิ้น</button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'settings' && !isStaffMode && (
-          <div className="space-y-6">
-            <h2 className="text-3xl font-black">การตั้งค่า</h2>
-            <div className="bg-white rounded-[36px] border border-slate-100 overflow-hidden">
-               <div className="p-6 border-b border-slate-50">
-                  <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block">รหัสสำหรับพนักงาน (6 หลัก)</label>
-                  <input type="text" className="text-2xl font-black outline-none text-indigo-600" value={config.staffPin} onChange={e => setConfig({...config, staffPin: e.target.value})} />
-               </div>
-               <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-                  <label className="text-sm font-bold text-slate-700">VAT (%)</label>
-                  <input type="number" className="w-16 text-right font-black" value={config.vatRate} onChange={e => setConfig({...config, vatRate: e.target.value})} />
-               </div>
-               <button onClick={() => { setUser(null); setAuthStep('landing'); }} className="w-full p-6 text-left text-rose-600 font-bold flex items-center gap-3">
-                  <LogOut size={18}/> ออกจากระบบ
-               </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Nav */}
-      <div className="bg-white border-t border-slate-100 flex justify-around p-6 pb-12 absolute bottom-0 w-full z-[150]">
-        <button onClick={() => setActiveTab('dashboard')} className={`flex-1 flex justify-center ${activeTab === 'dashboard' ? 'text-indigo-600' : 'text-slate-300'}`}><LayoutDashboard size={28}/></button>
-        <button onClick={() => setActiveTab('create')} className={`flex-1 flex justify-center ${activeTab === 'create' ? 'text-indigo-600' : 'text-slate-300'}`}><QrCode size={28}/></button>
-        {!isStaffMode && <button onClick={() => setActiveTab('settings')} className={`flex-1 flex justify-center ${activeTab === 'settings' ? 'text-indigo-600' : 'text-slate-300'}`}><Settings size={28}/></button>}
-        {isStaffMode && <button onClick={() => {setUser(null); setAuthStep('landing'); setIsStaffMode(false);}} className="flex-1 flex justify-center text-rose-300"><LogOut size={28}/></button>}
-      </div>
-
-      {/* Add Bank Modal */}
-      {isAddingBank && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[500] flex items-end">
-          <div className="bg-white w-full rounded-t-[56px] p-10 pb-16 animate-in slide-in-from-bottom-full">
-            <div className="flex justify-between items-center mb-8"><h3 className="text-3xl font-black">เพิ่มบัญชี</h3><button onClick={() => setIsAddingBank(false)}><X/></button></div>
-            <div className="space-y-4">
-              <input type="text" placeholder="ชื่อเรียกบัญชี" className="w-full p-6 bg-slate-50 rounded-3xl font-black outline-none" value={newName} onChange={e => setNewName(e.target.value)} />
-              <input type="tel" placeholder="เลข PromptPay" className="w-full p-6 bg-slate-50 rounded-3xl font-black outline-none" value={newId} onChange={e => setNewId(e.target.value)} />
-              <button onClick={() => { if(newName && newId) { setMerchants([...merchants, {id:Date.now(), name:newName, targetId:newId}]); setIsAddingBank(false); notify("เพิ่มสำเร็จ"); } }} className="w-full py-6 bg-indigo-600 text-white rounded-[32px] font-black">บันทึก</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default App;
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(e(App));
+  </script>
+</body>
+</html>
 
